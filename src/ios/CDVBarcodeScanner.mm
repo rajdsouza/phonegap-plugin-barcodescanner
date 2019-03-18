@@ -7,6 +7,8 @@
  */
 
 #import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIGestureRecognizer.h>
+#import <UIKit/UIPinchGestureRecognizer.h>
 #import <AssetsLibrary/AssetsLibrary.h>
 #import <Cordova/CDVPlugin.h>
 
@@ -112,6 +114,9 @@
 - (IBAction)cancelButtonPressed:(id)sender;
 - (IBAction)flipCameraButtonPressed:(id)sender;
 - (IBAction)torchButtonPressed:(id)sender;
+- (IBAction)zoomButtonPressed:(id)sender;
+- (IBAction)unzoomButtonPressed:(id)sender;
+- (IBAction)pinchGestureDidFire:(UIPinchGestureRecognizer *)pinch;
 
 @end
 
@@ -214,7 +219,7 @@
     processor.isTransitionAnimated = !disableAnimations;
 
     processor.formats = options[@"formats"];
-
+    
     [processor performSelector:@selector(scanBarcode) withObject:nil afterDelay:0];
 }
 
@@ -469,6 +474,46 @@ parentViewController:(UIViewController*)parentViewController
   [device unlockForConfiguration];
 }
 
+- (void)zoomCamera {
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    if ([device lockForConfiguration:nil]) {
+        CGFloat maxZoom = device.maxAvailableVideoZoomFactor;
+        CGFloat currentZoom = [device videoZoomFactor];
+        
+        NSLog(@"Max available zoom %d", (int) device.maxAvailableVideoZoomFactor);
+        
+        NSLog(@"Debug zoom %d %d", (int) currentZoom, (int) maxZoom);
+        if(currentZoom == maxZoom){
+            // do nothing
+        }
+        else
+        {
+            CGFloat zoomFactor = [device videoZoomFactor] + 1;
+            [device setVideoZoomFactor:zoomFactor];
+        }
+        [device unlockForConfiguration];
+    }
+}
+
+- (void)unzoomCamera {
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    if ([device lockForConfiguration:nil]) {
+       
+        CGFloat minZoom = device.minAvailableVideoZoomFactor;
+        CGFloat currentZoom = [device videoZoomFactor];
+        
+        if(currentZoom == minZoom){
+            
+        }
+        else
+        {
+             CGFloat zoomFactor = [device videoZoomFactor] - 1;
+             [device setVideoZoomFactor:zoomFactor];
+         }
+        [device unlockForConfiguration];
+    }
+}
+
 //--------------------------------------------------------------------------
 - (NSString*)setUpCaptureSession {
     NSError* error = nil;
@@ -491,6 +536,12 @@ parentViewController:(UIViewController*)parentViewController
 
     }
 
+    if (self.isFrontCamera) {
+    NSLog(@"Front Camera");
+    } else {
+         NSLog(@"Back camera");
+    }
+    
     // set focus params if available to improve focusing
     [device lockForConfiguration:&error];
     if (error == nil) {
@@ -502,7 +553,7 @@ parentViewController:(UIViewController*)parentViewController
         }
     }
     [device unlockForConfiguration];
-
+    
     AVCaptureDeviceInput* input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
     if (!input) return @"unable to obtain video capture device input";
 
@@ -781,7 +832,6 @@ parentViewController:(UIViewController*)parentViewController
 
     [self.view addSubview:[self buildOverlayView]];
     [self startCapturing];
-
     [super viewDidAppear:animated];
 }
 
@@ -793,6 +843,13 @@ parentViewController:(UIViewController*)parentViewController
 //--------------------------------------------------------------------------
 - (IBAction)shutterButtonPressed {
     self.shutterPressed = YES;
+}
+- (IBAction)zoomButtonPressed {
+    [self.processor zoomCamera];
+}
+
+- (IBAction)unzoomButtonPressed {
+    [self.processor unzoomCamera];
 }
 
 //--------------------------------------------------------------------------
@@ -810,6 +867,38 @@ parentViewController:(UIViewController*)parentViewController
   [self.processor performSelector:@selector(toggleTorch) withObject:nil afterDelay:0];
 }
 
+- (IBAction)pinchGestureDidFire:(UIPinchGestureRecognizer *)pinch {
+    NSLog(@"I am pinching %f", pinch.scale);
+}
+
+- (IBAction) pinchForZoom:(id) sender forEvent:(UIEvent*) event {
+    UIPinchGestureRecognizer* pinchRecognizer = (UIPinchGestureRecognizer *)sender;
+}
+
+
+- (void)handlePinchToZoomRecognizer:(UIPinchGestureRecognizer*)pinchRecognizer {
+    const CGFloat pinchVelocityDividerFactor = 5.0f;
+    
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    if (pinchRecognizer.state == UIGestureRecognizerStateChanged) {
+        NSError *error = nil;
+        if ([device lockForConfiguration:&error]) {
+            // device.videoZoomFactor = 1.0 + pinchRecognizer.scale * pinchZoomScaleFactor;
+            // [device unlockForConfiguration];
+            
+            CGFloat desiredZoomFactor = device.videoZoomFactor + atan2f(pinchRecognizer.velocity, pinchVelocityDividerFactor);
+            // Check if desiredZoomFactor fits required range from 1.0 to activeFormat.videoMaxZoomFactor
+            device.videoZoomFactor = MAX(1.0, MIN(desiredZoomFactor, device.activeFormat.videoMaxZoomFactor));
+            [device unlockForConfiguration];
+            
+        } else {
+            NSLog(@"error: %@", error);
+        }
+    }
+}
+
+
+
 //--------------------------------------------------------------------------
 - (UIView *)buildOverlayViewFromXib
 {
@@ -821,14 +910,14 @@ parentViewController:(UIViewController*)parentViewController
         return nil;
     }
 
-	self.overlayView.autoresizesSubviews = YES;
+    self.overlayView.autoresizesSubviews = YES;
     self.overlayView.autoresizingMask    = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.overlayView.opaque              = NO;
 
-	CGRect bounds = self.view.bounds;
+    CGRect bounds = self.view.bounds;
     bounds = CGRectMake(0, 0, bounds.size.width, bounds.size.height);
 
-	[self.overlayView setFrame:bounds];
+    [self.overlayView setFrame:bounds];
 
     return self.overlayView;
 }
@@ -847,6 +936,7 @@ parentViewController:(UIViewController*)parentViewController
     overlayView.autoresizesSubviews = YES;
     overlayView.autoresizingMask    = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     overlayView.opaque              = NO;
+
 
     self.toolbar = [[UIToolbar alloc] init];
     self.toolbar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -891,23 +981,54 @@ parentViewController:(UIViewController*)parentViewController
       items = [@[flexSpace, cancelButton, flexSpace] mutableCopy];
     }
 #endif
+  
+    CGRect rect = [[UIScreen mainScreen] accessibilityFrame];
+    UILabel *plusLabel = [[UILabel alloc] initWithFrame:rect];
+    plusLabel.backgroundColor = [UIColor clearColor];
+    plusLabel.textColor = [UIColor lightGrayColor];
+    plusLabel.text = @"+";
+    
+    id torchButtonPlus = [[UIBarButtonItem alloc]
+                          initWithTitle:@"+" style:UIBarButtonItemStylePlain target:(id)self action:@selector(zoomButtonPressed)
+                      ];
+    
+    [items insertObject:torchButtonPlus atIndex:0];
 
+
+    UILabel *minusLabel = [[UILabel alloc] initWithFrame:rect];
+    minusLabel.backgroundColor = [UIColor clearColor];
+    minusLabel.textColor = [UIColor lightGrayColor];
+    minusLabel.text = @"-";
+    
+    
+    id torchButtonMinus = [[UIBarButtonItem alloc]
+                       initWithTitle:@"-"
+                      style:UIBarButtonItemStylePlain
+                      target:(id)self
+                      action:@selector(unzoomButtonPressed)
+                      ];
+    
+    [items insertObject:torchButtonMinus atIndex:1];
+    
+    
+    
     if (_processor.isShowTorchButton && !_processor.isFrontCamera) {
       AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
       if ([device hasTorch] && [device hasFlash]) {
-        NSURL *bundleURL = [[NSBundle mainBundle] URLForResource:@"CDVBarcodeScanner" withExtension:@"bundle"];
-        NSBundle *bundle = [NSBundle bundleWithURL:bundleURL];
-        NSString *imagePath = [bundle pathForResource:@"torch" ofType:@"png"];
-        UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
-
-        id torchButton = [[UIBarButtonItem alloc]
-                           initWithImage:image
-                                   style:UIBarButtonItemStylePlain
-                                  target:(id)self
-                                  action:@selector(torchButtonPressed:)
-                           ];
-
-      [items insertObject:torchButton atIndex:0];
+          NSURL *bundleURL = [[NSBundle mainBundle] URLForResource:@"CDVBarcodeScanner" withExtension:@"bundle"];
+          NSBundle *bundle = [NSBundle bundleWithURL:bundleURL];
+          NSString *imagePath = [bundle pathForResource:@"torch" ofType:@"png"];
+          UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
+          
+          
+          id torchButton = [[UIBarButtonItem alloc]
+                            initWithImage:image
+                            style:UIBarButtonItemStylePlain
+                            target:(id)self
+                            action:@selector(torchButtonPressed:)
+                            ];
+          
+          [items insertObject:torchButton atIndex:0];
     }
   }
     self.toolbar.items = items;
